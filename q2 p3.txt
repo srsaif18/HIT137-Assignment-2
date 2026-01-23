@@ -1,0 +1,264 @@
+# Group Members:
+
+# Mou Rani Biswas - 398778
+
+# MD Saifur Rahman - 398921
+
+# Nahid Hasan Sangram - 395231
+
+# Mohammed Rifatul Alam - 399533
+
+#
+
+# HIT137 Assignment 2
+
+# Question 2 – Part 3 (Final): Seasonal averages + largest range + stability/variability
+ 
+import glob
+
+import os
+
+import pandas as pd
+ 
+MONTHS = [
+
+    "January","February","March","April","May","June",
+
+    "July","August","September","October","November","December"
+
+]
+ 
+SEASON_BY_MONTH = {
+
+    "December": "Summer", "January": "Summer", "February": "Summer",
+
+    "March": "Autumn", "April": "Autumn", "May": "Autumn",
+
+    "June": "Winter", "July": "Winter", "August": "Winter",
+
+    "September": "Spring", "October": "Spring", "November": "Spring",
+
+}
+ 
+SEASON_ORDER = ["Summer", "Autumn", "Winter", "Spring"]
+ 
+ 
+def load_all_csvs(temps_dir: str) -> pd.DataFrame:
+
+    pattern = os.path.join(temps_dir, "*.csv")
+
+    files = sorted(glob.glob(pattern))
+
+    if not files:
+
+        raise FileNotFoundError(f"No CSV files found in: {temps_dir}")
+ 
+    frames = []
+
+    required = ["STATION_NAME", "STN_ID"] + MONTHS
+ 
+    for fp in files:
+
+        df = pd.read_csv(fp)
+ 
+        missing = [c for c in required if c not in df.columns]
+
+        if missing:
+
+            raise ValueError(f"{os.path.basename(fp)} missing columns: {missing}")
+ 
+        df = df[required].copy()
+ 
+        for m in MONTHS:
+
+            df[m] = pd.to_numeric(df[m], errors="coerce")
+ 
+        frames.append(df)
+ 
+    return pd.concat(frames, ignore_index=True)
+ 
+ 
+def compute_seasonal_averages(all_data: pd.DataFrame) -> dict:
+
+    long_df = all_data.melt(
+
+        id_vars=["STATION_NAME", "STN_ID"],
+
+        value_vars=MONTHS,
+
+        var_name="Month",
+
+        value_name="Temp"
+
+    )
+ 
+    long_df["Season"] = long_df["Month"].map(SEASON_BY_MONTH)
+ 
+    season_means = (
+
+        long_df.dropna(subset=["Temp"])
+
+              .groupby("Season")["Temp"]
+
+              .mean()
+
+              .to_dict()
+
+    )
+ 
+    return {s: float(season_means.get(s, float("nan"))) for s in SEASON_ORDER}
+ 
+ 
+def write_average_temp(out_path: str, season_means: dict) -> None:
+
+    with open(out_path, "w", encoding="utf-8") as f:
+
+        for season in SEASON_ORDER:
+
+            f.write(f"{season}: {season_means[season]:.1f}°C\n")
+ 
+ 
+# -------------------- PART 2: Largest temperature range station(s) --------------------
+ 
+def compute_station_ranges(all_data: pd.DataFrame) -> pd.DataFrame:
+
+    long_df = all_data.melt(
+
+        id_vars=["STATION_NAME", "STN_ID"],
+
+        value_vars=MONTHS,
+
+        var_name="Month",
+
+        value_name="Temp"
+
+    ).dropna(subset=["Temp"])
+ 
+    stats = (
+
+        long_df.groupby(["STATION_NAME", "STN_ID"], as_index=False)["Temp"]
+
+              .agg(min_temp="min", max_temp="max")
+
+    )
+
+    stats["range_temp"] = stats["max_temp"] - stats["min_temp"]
+
+    return stats
+ 
+ 
+def write_largest_range(out_path: str, ranges_df: pd.DataFrame) -> None:
+
+    max_range = ranges_df["range_temp"].max()
+
+    winners = ranges_df[ranges_df["range_temp"] == max_range].copy()
+ 
+    with open(out_path, "w", encoding="utf-8") as f:
+
+        for _, row in winners.iterrows():
+
+            name = row["STATION_NAME"]
+
+            r = row["range_temp"]
+
+            mx = row["max_temp"]
+
+            mn = row["min_temp"]
+
+            f.write(f"{name}: Range {r:.1f}°C (Max: {mx:.1f}°C, Min: {mn:.1f}°C)\n")
+ 
+ 
+# -------------------- PART 3: Stability (std dev) --------------------
+ 
+def compute_station_std(all_data: pd.DataFrame) -> pd.DataFrame:
+
+    """
+
+    Computes standard deviation per station across ALL years and months.
+
+    Using population std dev (ddof=0) for full dataset stability.
+
+    """
+
+    long_df = all_data.melt(
+
+        id_vars=["STATION_NAME", "STN_ID"],
+
+        value_vars=MONTHS,
+
+        var_name="Month",
+
+        value_name="Temp"
+
+    ).dropna(subset=["Temp"])
+ 
+    std_df = (
+
+        long_df.groupby(["STATION_NAME", "STN_ID"], as_index=False)["Temp"]
+
+              .std(ddof=0)
+
+              .rename(columns={"Temp": "std"})
+
+    )
+
+    return std_df
+ 
+ 
+def write_stability(out_path: str, std_df: pd.DataFrame) -> None:
+
+    min_std = std_df["std"].min()
+
+    max_std = std_df["std"].max()
+ 
+    stable = std_df[std_df["std"] == min_std].copy()
+
+    variable = std_df[std_df["std"] == max_std].copy()
+ 
+    with open(out_path, "w", encoding="utf-8") as f:
+
+        for _, row in stable.iterrows():
+
+            f.write(f"Most Stable: {row['STATION_NAME']}: StdDev {row['std']:.1f}°C\n")
+ 
+        for _, row in variable.iterrows():
+
+            f.write(f"Most Variable: {row['STATION_NAME']}: StdDev {row['std']:.1f}°C\n")
+ 
+ 
+def main():
+
+    here = os.path.dirname(os.path.abspath(__file__))
+
+    temps_dir = os.path.join(here, "temperatures")
+ 
+    all_data = load_all_csvs(temps_dir)
+ 
+    # Part 1
+
+    season_means = compute_seasonal_averages(all_data)
+
+    write_average_temp(os.path.join(here, "average_temp.txt"), season_means)
+ 
+    # Part 2
+
+    ranges_df = compute_station_ranges(all_data)
+
+    write_largest_range(os.path.join(here, "largest_temp_range_station.txt"), ranges_df)
+ 
+    # Part 3
+
+    std_df = compute_station_std(all_data)
+
+    write_stability(os.path.join(here, "temperature_stability_stations.txt"), std_df)
+ 
+    print(" Q2 complete: all required output files generated.")
+ 
+ 
+if __name__ == "__main__":
+
+    main()
+
+ 
+
+ 
